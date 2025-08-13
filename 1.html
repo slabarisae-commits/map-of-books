@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивная карта книг</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f9;
+            overflow: hidden;
+        }
+        #map {
+            height: 100vh;
+            width: 100vw;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 1;
+        }
+        #sidebar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 300px;
+            max-height: calc(100vh - 40px);
+            padding: 20px;
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+            z-index: 2;
+            font-size: 16px;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+        #sidebar.collapsed {
+            transform: translateX(340px);
+        }
+        #toggle-btn {
+            position: absolute;
+            top: 20px;
+            right: 360px;
+            width: 40px;
+            height: 40px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        #toggle-btn:hover {
+            background-color: #45a049;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin: 0 0 10px;
+            font-size: 24px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin: 0 0 20px;
+            font-size: 14px;
+            font-style: italic;
+        }
+        .leaflet-popup-content ul {
+            padding-left: 20px;
+            margin: 0;
+        }
+        .leaflet-popup-content li {
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+        .leaflet-popup-content img {
+            width: 60px;
+            height: 90px;
+            margin-right: 10px;
+            object-fit: cover;
+            border: 1px solid #ddd;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <button id="toggle-btn" onclick="toggleSidebar()">+</button>
+    <div id="sidebar" class="collapsed">
+        <h1>Моя карта книг</h1>
+        <p class="subtitle">начата в августе 2025</p>
+        <div id="form">
+            <h2>Добавить книгу</h2>
+            <div class="form-group">
+                <label for="country">Страна (на английском):</label>
+                <input type="text" id="country" placeholder="Например, Russia">
+            </div>
+            <div class="form-group">
+                <label for="title">Название книги:</label>
+                <input type="text" id="title" placeholder="Введите название">
+            </div>
+            <div class="form-group">
+                <label for="author">Автор:</label>
+                <input type="text" id="author" placeholder="Введите автора">
+            </div>
+            <div class="form-group">
+                <label for="cover">Ссылка на обложку (необязательно):</label>
+                <input type="text" id="cover" placeholder="Например, https://example.com/cover.jpg">
+            </div>
+            <button onclick="addBook()">Добавить книгу</button>
+        </div>
+    </div>
+
+    <script>
+        // Инициализация карты
+        var map = L.map('map').setView([20, 0], 2);
+
+        // Добавление базовой карты (контурная)
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        // Конфигурация Airtable
+        const PAT = 'pathE7kVpaI5ZUoaV.8c139e8d06c65fc6eca4ff74cc429868e4f9fc0384641200f0df6d4e5768bacf'; // Замени на свой персональный токен
+        const BASE_ID = 'approwSXS1eBskOfN'; // Замени на свой Base ID
+        const TABLE_NAME = 'books'; // Замени на имя таблицы
+
+        // Пустая база данных (заполняется из Airtable)
+        var booksByCountry = {};
+
+        // Пастельные цвета для стран
+        var pastelColors = [
+            '#A3BFFA', // Пастельный голубой
+            '#FDCBC9', // Пастельный розовый
+            '#C3E0DC', // Пастельный мятный
+            '#D4A5D4', // Пастельный лавандовый
+            '#F7E4A7', // Пастельный жёлтый
+            '#B5EAD7'  // Пастельный зелёный
+        ];
+
+        // Функция для получения случайного пастельного цвета
+        function getPastelColor(index) {
+            return pastelColors[index % pastelColors.length];
+        }
+
+        // Функция для отображения информации о книгах во всплывающем окне
+        function displayBooks(countryName, latlng) {
+            var popupContent;
+            if (booksByCountry[countryName]) {
+                var books = booksByCountry[countryName].books;
+                var bookList = books.map(book => 
+                    `<li>
+                        ${book.cover ? `<img src="${book.cover}" alt="${book.title}" loading="lazy">` : ''}
+                        <div><strong>${book.title}</strong> (${book.author})</div>
+                    </li>`
+                ).join('');
+                popupContent = `
+                    <h2>${countryName}</h2>
+                    <ul>${bookList}</ul>
+                `;
+            } else {
+                popupContent = `
+                    <h2>${countryName}</h2>
+                    <p>Нет книг для этой страны. Добавь их через форму!</p>
+                `;
+            }
+            L.popup()
+                .setLatLng(latlng)
+                .setContent(popupContent)
+                .openOn(map);
+        }
+
+        // Загрузка данных из Airtable
+        async function loadDataFromAirtable() {
+            try {
+                const response = await fetch(`https://api.airtable.com/v0/${BASE_ID}/${TABLE_NAME}`, {
+                    headers: {
+                        Authorization: `Bearer ${PAT}`
+                    }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                console.log('Данные из Airtable:', data); // Для отладки
+                booksByCountry = {};
+                data.records.forEach(record => {
+                    const country = record.fields['Страна'];
+                    const title = record.fields['Название книги'];
+                    const author = record.fields['Автор'];
+                    const cover = record.fields['Ссылка на обложку'] || 'https://via.placeholder.com/60x90?text=No+Cover';
+                    if (!booksByCountry[country]) {
+                        booksByCountry[country] = { read: true, books: [], color: getPastelColor(country.split('').reduce((a, c) => a + c.charCodeAt(0), 0)) };
+                    }
+                    booksByCountry[country].books.push({ title, author, cover });
+                });
+                updateMap();
+            } catch (error) {
+                console.error('Ошибка загрузки данных из Airtable:', error);
+                alert(`Не удалось загрузить данные из Airtable. Проверь API-ключ и подключение. Код ошибки: ${error.message}`);
+            }
+        }
+
+        // Отправка данных в Airtable
+        async function sendDataToAirtable(country, title, author, cover) {
+            try {
+                const response = await fetch(`https://api.airtable.com/v0/${BASE_ID}/${TABLE_NAME}`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${PAT}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        records: [{
+                            fields: {
+                                'Страна': country,
+                                'Название книги': title,
+                                'Автор': author,
+                                'Ссылка на обложку': cover || ''
+                            }
+                        }]
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                console.log('Данные успешно отправлены в Airtable:', await response.json());
+                loadDataFromAirtable(); // Обновляем данные после добавления
+            } catch (error) {
+                console.error('Ошибка отправки данных в Airtable:', error);
+                alert(`Не удалось сохранить данные в Airtable. Код ошибки: ${error.message}`);
+            }
+        }
+
+        // Функция для добавления книги
+        async function addBook() {
+            var country = document.getElementById('country').value.trim();
+            var title = document.getElementById('title').value.trim();
+            var author = document.getElementById('author').value.trim();
+            var cover = document.getElementById('cover').value.trim();
+
+            if (!country || !title || !author) {
+                alert('Пожалуйста, заполните поля: страна, название и автор!');
+                return;
+            }
+
+            await sendDataToAirtable(country, title, author, cover);
+
+            // Очистка формы
+            document.getElementById('country').value = '';
+            document.getElementById('title').value = '';
+            document.getElementById('author').value = '';
+            document.getElementById('cover').value = '';
+        }
+
+        // Функция для сворачивания/разворачивания панели
+        function toggleSidebar() {
+            var sidebar = document.getElementById('sidebar');
+            var toggleBtn = document.getElementById('toggle-btn');
+            if (sidebar.classList.contains('collapsed')) {
+                sidebar.classList.remove('collapsed');
+                toggleBtn.textContent = '×';
+            } else {
+                sidebar.classList.add('collapsed');
+                toggleBtn.textContent = '+';
+            }
+        }
+
+        // Функция для обновления карты
+        function updateMap() {
+            map.eachLayer(function(layer) {
+                if (layer instanceof L.GeoJSON) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            fetch('https://raw.githubusercontent.com/datasets/geo-boundaries-world-110m/master/countries.geojson')
+                .then(response => {
+                    if (!response.ok) {
+                        console.error('Ошибка загрузки GeoJSON:', response.statusText);
+                        alert('Не удалось загрузить данные карты. Проверьте интернет-соединение.');
+                        return;
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data) {
+                        L.geoJSON(data, {
+                            style: function(feature) {
+                                var countryName = feature.properties.name;
+                                return {
+                                    fillColor: booksByCountry[countryName] ? booksByCountry[countryName].color : '#ccc',
+                                    weight: 1,
+                                    opacity: 1,
+                                    color: 'black',
+                                    fillOpacity: 0.7
+                                };
+                            },
+                            pointToLayer: function(feature, latlng) {
+                                // Для маленьких стран (точек)
+                                return L.circleMarker(latlng, {
+                                    radius: 5,
+                                    fillColor: booksByCountry[feature.properties.name] ? booksByCountry[feature.properties.name].color : '#ccc',
+                                    weight: 1,
+                                    opacity: 1,
+                                    color: 'black',
+                                    fillOpacity: 0.7
+                                });
+                            },
+                            onEachFeature: function(feature, layer) {
+                                var countryName = feature.properties.name;
+                                layer.on('click', function(e) {
+                                    displayBooks(countryName, e.latlng);
+                                });
+                            }
+                        }).addTo(map);
+                    }
+                })
+                .catch(error => {
+                    console.error('Ошибка при загрузке GeoJSON:', error);
+                    alert('Ошибка загрузки карты. Проверьте консоль разработчика (F12) для деталей.');
+                });
+        }
+
+        // Загрузка данных при старте
+        loadDataFromAirtable();
+
+        // Обновление карты при изменении размера окна
+        window.addEventListener('resize', function() {
+            map.invalidateSize();
+        });
+    </script>
+</body>
+</html>
